@@ -237,7 +237,7 @@ def singlepart_upload(bucket, key_name, fullpath, *kargs, **kwargs):
     print("SINGLE PART UPLOAD STARTS...")
     k = bucket.new_key(key_name)
     k.set_contents_from_filename(fullpath, *kargs, **kwargs)
-
+    print("===========================SINGLEPART COMPLETES==============================")
 
 def expand_path(path):
     path = os.path.expanduser(path)
