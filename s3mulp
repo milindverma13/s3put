@@ -1,0 +1,133 @@
+#! /usr/bin/env python3
+
+"""
+This program is used to upload files to AWS S3 using multipart upload.
+
+Usage: s3mulp [-s LOCAL_DIRECTORY] [ -b BUCKET_NAME] [-d DEST_DIRECTORY] [-ext FILES_EXTENSIONS]
+where:
+    LOCAL_DIRECTORY is the path to the local directory
+    which contains the local files to be transferred.
+
+    BUCKET_NAME is the name of the destination S3 bucket.
+    
+    DEST_DIRECTORY (optional) is the path inside the destination
+    bucket that the files need to be transferred to. Note that
+    it should not start with '/'. If it is not specified,
+    files will be uploaded to the main bucket directory.
+    
+    FILES_EXTENSION (optional) is the extensions of the files in
+    
+    LOCAL_DIRECTORY that need to be transfered. Extensions
+    should be separated by ',' only. If FILES_EXTENSION is
+    not specified, all files in the directory are uploaded
+    (except files whose names start with '.').
+
+This program uploads files only; folders are ignored.
+
+Enclose all arguments with quotation marks, as shown
+in the example below.
+
+Example:
+s3mulp -s "/Users/abc/xyz/" -b "bucket_3" -d "2018/Nov/" -ext "png,csv"
+This will upload all png and csv files in the local directory 'xyz' 
+to the directory '2018/Nov/' inside bucket_3.
+"""
+
+import boto3
+from boto3.s3.transfer import TransferConfig
+import os
+import threading
+import sys
+import requests
+
+def multipart_upload_boto3():
+    # multipart_threshold : Ensure that multipart uploads/downloads only happen if the      size of a transfer
+    # is larger than 25 MB
+    # multipart_chunksize : Each part size is of 25 MB
+    config = TransferConfig(multipart_threshold=1024 * 25,
+                        max_concurrency=20,
+                        multipart_chunksize=1024 * 25,
+                        use_threads=True)
+
+    cmd_args = sys.argv
+
+    if len(cmd_args) == 2 and ('-h' in cmd_args or '--help' in cmd_args):
+        print(__doc__)
+        sys.exit()
+
+    # create a resource instance
+    s3 = boto3.resource('s3')
+
+    if len(cmd_args) > 3:
+        if ('-b' in cmd_args):
+            b_index = cmd_args.index('-b')
+            # the bucket name in the aws cloud
+            bucket = cmd_args[b_index + 1]
+        else:
+            print("ERROR: specify [-b] option with bucket name")
+
+        if '-d' in cmd_args:
+            d_index = cmd_args.index('-d')
+            # the destination folder in the destination bucket
+            dest_directory = cmd_args[d_index + 1]
+        else:
+            dest_directory = ''
+
+        if '-s' in cmd_args:
+            l_index = cmd_args.index('-s')
+            # the src folder in the destination bucket
+            local_directory = cmd_args[l_index + 1]
+        else:
+            print("ERROR: specify [-s] with the local dir")
+
+        if '-ext' in cmd_args:
+            ext_index = cmd_args.index('-ext')
+            extensions = tuple(cmd_args[ext_index + 1].split(','))
+            files_list = [
+                x for x in os.listdir(local_directory) if (
+                    not x.startswith(".") and
+                    os.path.isfile(os.path.join(local_directory, x))
+                    and x.endswith(extensions))
+            ]
+        else:
+            files_list = [
+                x for x in os.listdir(local_directory) if (
+                    not x.startswith(".") and
+                    os.path.isfile(os.path.join(local_directory, x)))
+            ]
+        # loop through the desired source files
+    for f in files_list:
+        # get source file path
+        src_path = os.path.join(local_directory, f)
+
+        # specify the destination path inside the bucket
+        dest_path = os.path.join(dest_directory, f)
+
+        # upload the file and make it public
+        s3.Object(bucket, dest_path).upload_file(src_path,
+                            ExtraArgs={'ContentType': 'text/plain'},
+                            Config=config,
+                            Callback=ProgressPercentage(src_path)
+                            )
+
+class ProgressPercentage(object):
+    def __init__(self, filename):
+        self._filename = filename
+        self._size = float(os.path.getsize(filename))
+        self._seen_so_far = 0
+        self._lock = threading.Lock()
+
+    def __call__(self, bytes_amount):
+        # To simplify we'll assume this is hooked up
+        # to a single filename.
+        with self._lock:
+            self._seen_so_far += bytes_amount
+            percentage = (self._seen_so_far / self._size) * 100
+            sys.stdout.write(
+                "\r%s  %s / %s  (%.2f%%)" % (
+                    self._filename, self._seen_so_far, self._size,
+                    percentage))
+            sys.stdout.flush()
+
+if __name__ == '__main__':
+ multipart_upload_boto3()
